@@ -4,6 +4,7 @@ import { Alert, Pressable, StyleSheet, Text, View, TextInput } from 'react-nativ
 import SignatureScreen from 'react-native-signature-canvas';
 import Edit from './src/components/Edit';
 import { exportPdf } from './src/functions/exportPdf';
+import { uploadPdf } from './src/functions/uploadPdf';
 
 export default function App() {
   const signatureRef = useRef(null);
@@ -29,10 +30,11 @@ export default function App() {
   const handleExportPdf = async () => {
     try {
       const uri = await exportPdf({ inputValue, signatureData });
-      Alert.alert('PDF created', `Saved to:\n${uri}`);
+      const result = await uploadPdf(uri);
+      Alert.alert('PDF uploaded', `Saved on server:\n${result.url}`);
     } catch (error) {
-      Alert.alert('Export failed', 'Could not generate the PDF.');
-      console.error('PDF export error:', error);
+      Alert.alert('Export failed', 'Could not generate or upload the PDF.');
+      console.error('PDF export/upload error:', error);
     }
   };
 
