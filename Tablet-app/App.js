@@ -1,17 +1,58 @@
 import { StatusBar } from 'expo-status-bar';
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View, TextInput } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import * as SecureStore from 'expo-secure-store';
 import SignatureScreen from 'react-native-signature-canvas';
 import Edit from './src/components/Edit';
+import Settings from './src/components/Settings';
+import ProgressModal from './src/components/ProgressModal';
 import { exportPdf } from './src/functions/exportPdf';
 import { uploadPdf } from './src/functions/uploadPdf';
 
 export default function App() {
   const signatureRef = useRef(null);
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
+  const [isSettingsVisible, setIsSettingsVisible] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [signatureData, setSignatureData] = useState('');
   const [permanentText, setPermanentText] = useState('Permanent text');
+  const [progressStatus, setProgressStatus] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Memory fallback for permanent text
+  const permanentTextMemory = useRef({});
+
+  useEffect(() => {
+    loadPermanentText();
+  }, []);
+
+  const loadPermanentText = async () => {
+    try {
+      const saved = await SecureStore.getItemAsync('permanentText');
+      if (saved) {
+        setPermanentText(saved);
+        permanentTextMemory.current.value = saved;
+        return;
+      }
+    } catch (error) {
+      // SecureStore might fail, fall back to memory
+    }
+
+    // Check memory fallback
+    if (permanentTextMemory.current.value) {
+      setPermanentText(permanentTextMemory.current.value);
+    }
+  };
+
+  const savePermanentText = async (text) => {
+    permanentTextMemory.current.value = text;
+    try {
+      await SecureStore.setItemAsync('permanentText', text);
+    } catch (error) {
+      // If SecureStore fails, value is still in memory fallback
+    }
+  };
 
   const handleSignatureSave = (signature) => {
     setSignatureData(signature);
@@ -23,28 +64,62 @@ export default function App() {
   };
 
   const handleDeleteSignaturePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     signatureRef.current?.clearSignature();
     setSignatureData('');
   };
 
+  const handleButtonPress = (callback) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    callback();
+  };
+
   const handleExportPdf = async () => {
+    setIsProcessing(true);
+    setProgressStatus('generating');
     try {
       const uri = await exportPdf({ inputValue, signatureData });
+      setProgressStatus('uploading');
       const result = await uploadPdf(uri);
-      Alert.alert('PDF uploaded', `Saved on server:\n${result.url}`);
+      setProgressStatus('complete');
+      setTimeout(() => {
+        Alert.alert('Success', `PDF uploaded successfully!`, [
+          { text: 'OK', onPress: () => {
+            setIsProcessing(false);
+            setInputValue('');
+            setSignatureData('');
+            signatureRef.current?.clearSignature();
+          } },
+        ]);
+      }, 300);
     } catch (error) {
-      Alert.alert('Export failed', 'Could not generate or upload the PDF.');
+      setProgressStatus('error');
+      setTimeout(() => {
+        Alert.alert('Error', error.message || 'Failed to export or upload PDF', [
+          { text: 'OK', onPress: () => setIsProcessing(false) },
+        ]);
+      }, 300);
       console.error('PDF export/upload error:', error);
     }
   };
 
   const handleEditSave = (newText) => {
     setPermanentText(newText);
+    savePermanentText(newText);
     setIsEditModalVisible(false);
   };
 
   return (
     <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.appTitle}>Tablet App</Text>
+        <Pressable
+          style={({ pressed }) => [styles.settingsButton, pressed && { opacity: 0.7 }]}
+          onPress={() => handleButtonPress(() => setIsSettingsVisible(true))}
+        >
+          <Text style={styles.settingsButtonText}>⚙️</Text>
+        </Pressable>
+      </View>
       <TextInput 
         placeholder="Type here..." 
         value={inputValue}
@@ -54,8 +129,8 @@ export default function App() {
       <View style={styles.row}>
         <Text style={styles.permanentText}>{permanentText}</Text>
         <Pressable
-          style={styles.editButton}
-          onPress={() => setIsEditModalVisible(true)}
+          style={({ pressed }) => [styles.editButton, pressed && { opacity: 0.7 }]}
+          onPress={() => handleButtonPress(() => setIsEditModalVisible(true))}
         >
           <Text style={styles.editButtonText}>Edit</Text>
         </Pressable>
@@ -67,10 +142,10 @@ export default function App() {
         onSave={handleEditSave}
       />
       <View style={styles.signatureActionsRow}>
-        <Pressable style={styles.deleteButton} onPress={handleDeleteSignaturePress}>
+        <Pressable style={({ pressed }) => [styles.deleteButton, pressed && { opacity: 0.7 }]} onPress={handleDeleteSignaturePress}>
           <Text style={styles.deleteButtonText}>Delete Signature</Text>
         </Pressable>
-        <Pressable style={styles.saveButton} onPress={handleSaveSignaturePress}>
+        <Pressable style={({ pressed }) => [styles.saveButton, pressed && { opacity: 0.7 }]} onPress={() => handleButtonPress(handleSaveSignaturePress)}>
           <Text style={styles.saveButtonText}>Save Signature</Text>
         </Pressable>
       </View>
@@ -83,17 +158,62 @@ export default function App() {
           clearText="Clear"
           confirmText="Save"
           autoClear={false}
+          penColor="#111"
+          backgroundColor="#fff"
+          dotSize={1}
+          maxWidth={2}
+          minWidth={1}
+          minDistance={0}
           webStyle={`
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            html, body {
+              width: 100%;
+              height: 100%;
+              display: flex;
+              flex-direction: column;
+            }
+            .m-signature-pad {
+              display: flex;
+              flex-direction: column;
+              width: 100%;
+              height: 100%;
+              flex: 1;
+            }
+            .m-signature-pad--body {
+              flex: 1;
+              display: flex;
+              width: 100%;
+              height: 100%;
+              overflow: hidden;
+            }
             .m-signature-pad--footer {
-              display: none;
+              display: none !important;
+            }
+            .m-signature-pad canvas {
+              display: block;
+              width: 100% !important;
+              height: 100% !important;
+              flex: 1;
+              touch-action: none;
+              image-rendering: pixelated;
             }
           `}
           style={styles.signaturePad}
         />
       </View>
-      <Pressable style={styles.exportButton} onPress={handleExportPdf}>
-        <Text style={styles.exportButtonText}>Export PDF</Text>
+      <Pressable style={({ pressed }) => [styles.exportButton, pressed && { opacity: 0.7 }, isProcessing && { opacity: 0.6 }]} onPress={() => !isProcessing && handleButtonPress(handleExportPdf)} disabled={isProcessing}>
+        <Text style={styles.exportButtonText}>{isProcessing ? 'Processing...' : 'Export PDF'}</Text>
       </Pressable>
+      <ProgressModal visible={isProcessing} status={progressStatus} />
+      <Settings
+        visible={isSettingsVisible}
+        onClose={() => setIsSettingsVisible(false)}
+        onUrlUpdated={() => console.log('Server URL updated')}
+      />
       <StatusBar style="auto" />
     </View>
   );
@@ -106,6 +226,25 @@ const styles = StyleSheet.create({
     paddingTop: 60,
     paddingHorizontal: 16,
     paddingBottom: 20,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  appTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111',
+  },
+  settingsButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#f6f8fa',
+  },
+  settingsButtonText: {
+    fontSize: 20,
   },
   row: {
     flexDirection: 'row',
